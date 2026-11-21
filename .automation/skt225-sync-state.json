@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "group": "СКТ-225",
+  "timezone": "Europe/Moscow",
+  "rules_version": "skt225-v1",
+  "source": {
+    "repository": "retr0-pm/sarov-schedule-skt225",
+    "artifact_name": "sarov-schedule"
+  },
+  "weeks": {}
+}
