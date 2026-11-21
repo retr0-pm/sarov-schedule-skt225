@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
+
+
 def observe_verified_pdf(
     state: dict[str, Any],
     *,
@@ -11,6 +14,7 @@ def observe_verified_pdf(
     checked_at: str | None = None,
 ) -> dict[str, Any]:
     """Зафиксировать PDF, не выдавая наблюдение за успешную синхронизацию."""
+
     result = deepcopy(state)
     timestamp = checked_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     weeks = result.setdefault("weeks", {})

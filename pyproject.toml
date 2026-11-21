@@ -1,6 +1,7 @@
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
+
 [project]
 name = "sarov-schedule-skt225"
 version = "1.0.0"
@@ -9,8 +10,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = ["requests>=2.32.0,<3"]
+
 [project.scripts]
 sarov-schedule-fetch = "sarov_schedule.cli:main"
 sarov-schedule-validate = "sarov_schedule.validate:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
