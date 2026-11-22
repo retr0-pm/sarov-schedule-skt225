@@ -9,6 +9,16 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "schema/**"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - ".github/workflows/fetch.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "schema/**"
       - "requirements.txt"
       - "pyproject.toml"
       - ".github/workflows/fetch.yml"
@@ -47,8 +57,14 @@ jobs:
       - name: Fetch complete second-course schedule
         run: sarov-schedule-fetch --output output
 
-      - name: Validate artifact contents
+      - name: Validate downloaded PDFs
         run: sarov-schedule-validate output
+
+      - name: Recognize SKT-225 schedule and apply skt225-v3 rules
+        run: sarov-schedule-recognize output
+
+      - name: Validate structured schedule
+        run: sarov-schedule-validate --require-schedule output
 
       - name: Upload short-lived artifact
         uses: actions/upload-artifact@v4

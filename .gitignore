@@ -6,3 +6,6 @@ output/
 dist/
 build/
 *.egg-info/
+*.pdf
+!tests/fixtures/week_a.pdf
+!tests/fixtures/week_b.pdf

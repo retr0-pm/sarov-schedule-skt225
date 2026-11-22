@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/retr0-pm/sarov-schedule-skt225/schema/schedule.schema.json",
+  "title": "Structured SKT-225 schedule",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rules_version",
+    "generated_at",
+    "manifest_fingerprint",
+    "academic_year",
+    "semester",
+    "group",
+    "timezone",
+    "recognition",
+    "weeks",
+    "events",
+    "exclusions",
+    "ambiguities"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "rules_version": {"const": "skt225-v3"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "manifest_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "academic_year": {"type": "string", "pattern": "^\\d{4}/\\d{4}$"},
+    "semester": {"type": "string", "minLength": 1},
+    "group": {"const": "СКТ-225"},
+    "timezone": {"const": "Europe/Moscow"},
+    "recognition": {
+      "type": "object",
+      "required": [
+        "status",
+        "safe_for_deletions",
+        "processed_week_count",
+        "verified_week_count",
+        "ambiguous_week_count",
+        "included_count",
+        "excluded_count",
+        "ambiguity_count"
+      ]
+    },
+    "weeks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "week_id",
+          "source_pdf",
+          "source_pdf_sha256",
+          "status",
+          "safe_for_deletions",
+          "included_count",
+          "excluded_count",
+          "ambiguity_count"
+        ]
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/event"}
+    },
+    "exclusions": {"type": "array"},
+    "ambiguities": {"type": "array"}
+  },
+  "$defs": {
+    "lessonNumber": {
+      "oneOf": [
+        {"type": "integer", "minimum": 1, "maximum": 6},
+        {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "integer", "minimum": 1, "maximum": 6}
+        }
+      ]
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "group",
+        "date",
+        "lesson_number",
+        "start",
+        "end",
+        "timezone",
+        "subject",
+        "teacher",
+        "room",
+        "lesson_type",
+        "source_pdf",
+        "source_pdf_sha256",
+        "week_id",
+        "recognition_status"
+      ],
+      "properties": {
+        "source_id": {"type": "string", "pattern": "^skt225-v3-[0-9a-f]{24}$"},
+        "series_id": {"type": "string", "pattern": "^series-[0-9a-f]{24}$"},
+        "group": {"const": "СКТ-225"},
+        "date": {"type": "string", "format": "date"},
+        "lesson_number": {"$ref": "#/$defs/lessonNumber"},
+        "start": {"type": "string", "pattern": "^\\d{2}:\\d{2}$"},
+        "end": {"type": "string", "pattern": "^\\d{2}:\\d{2}$"},
+        "timezone": {"const": "Europe/Moscow"},
+        "subject": {"type": "string", "minLength": 1},
+        "teacher": {"type": ["string", "null"]},
+        "room": {"type": ["string", "null"]},
+        "lesson_type": {"type": ["string", "null"]},
+        "source_pdf": {"type": "string", "pattern": "^[^/\\\\]+\\.pdf$"},
+        "source_pdf_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "week_id": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}/\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "recognition_status": {"enum": ["verified", "ambiguous"]}
+      }
+    }
+  }
+}
