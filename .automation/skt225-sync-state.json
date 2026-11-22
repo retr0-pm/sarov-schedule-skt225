@@ -2,7 +2,7 @@
   "schema_version": 1,
   "group": "СКТ-225",
   "timezone": "Europe/Moscow",
-  "rules_version": "skt225-v1",
+  "rules_version": "skt225-v3",
   "source": {
     "repository": "retr0-pm/sarov-schedule-skt225",
     "artifact_name": "sarov-schedule"

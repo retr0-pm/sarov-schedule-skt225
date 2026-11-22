@@ -4,15 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sarov-schedule-skt225"
-version = "1.0.0"
-description = "Безопасная публикация расписания второго курса филиала МГУ в Сарове"
+version = "1.1.0"
+description = "Безопасная публикация PDF и структурированного расписания СКТ-225"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["requests>=2.32.0,<3"]
+dependencies = [
+  "pdfplumber>=0.11.0,<1",
+  "requests>=2.32.0,<3",
+]
 
 [project.scripts]
 sarov-schedule-fetch = "sarov_schedule.cli:main"
+sarov-schedule-recognize = "sarov_schedule.recognize_cli:main"
 sarov-schedule-validate = "sarov_schedule.validate:main"
 
 [tool.setuptools.packages.find]
