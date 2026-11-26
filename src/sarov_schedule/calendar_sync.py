@@ -255,6 +255,7 @@ def build_plan(schedule: dict, calendar: list[dict], now: datetime) -> Plan:
             stale[key] = old
 
     match_changes(plan, missing, stale)
+    replace_exact_slots(plan, missing, stale, future, safe_weeks)
     plan.operations.extend(Operation("create", desired) for desired in missing.values())
     plan.operations.extend(Operation("delete", previous=old) for old in stale.values())
     plan.operations.sort(key=lambda op: (
@@ -292,6 +293,30 @@ def match_changes(plan: Plan, missing: dict[str, dict], stale: dict[str, Existin
         ident, old = next(iter(pairs.items()))
         plan.operations.append(Operation("update", missing.pop(key), old))
         del stale[ident]
+
+
+def replace_exact_slots(
+    plan: Plan, missing: dict[str, dict], stale: dict[str, Existing],
+    future: dict[str, dict], safe_weeks: set[str],
+) -> None:
+    """Use the verified schedule for a one-to-one replacement at the same time."""
+    slots = {key: (event["week_id"], moment(event["date"], event["start"]),
+                   moment(event["date"], event["end"])) for key, event in future.items()}
+    desired_counts = Counter(slots.values())
+    stale_slots: dict[tuple[str, datetime, datetime], list[str]] = defaultdict(list)
+    for ident, old in stale.items():
+        stale_slots[old.markers["week_id"], old.start, old.end].append(ident)
+
+    for key in list(missing):
+        slot = slots[key]
+        candidates = stale_slots.get(slot, [])
+        if not candidates or slot[0] not in safe_weeks:
+            continue
+        if desired_counts[slot] != 1 or len(candidates) != 1:
+            plan.conflicts.append("ambiguous_exact_slot_replacement")
+            continue
+        old = stale.pop(candidates[0])
+        plan.operations.append(Operation("update", missing.pop(key), old))
 
 
 def guard_deletions(plan: Plan, limit: int) -> None:
