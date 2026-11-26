@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "started_at": "2026-11-26T22:48:08.179977+00:00",
-  "run_id": "45907008629",
+  "started_at": "2026-11-26T23:08:22.952351+00:00",
+  "run_id": "45909054262",
   "run_attempt": "1",
   "sha": "b513286f0a4d72881c4f9ee58ed659aef729e004",
   "manifest_fingerprint": "81104b09a17fa65ccf65b6eab1a8c5994e9ac2aced293c4f86db65127c8d2801",
@@ -16,9 +16,11 @@
   "deletions_blocked": 0,
   "overlapping_creates_blocked": 0,
   "verified": false,
-  "errors": [],
+  "errors": [
+    "calendar_http_403"
+  ],
   "changes": [],
   "planned": [],
-  "mode": "off",
-  "status": "disabled"
+  "mode": "dry-run",
+  "status": "error"
 }
