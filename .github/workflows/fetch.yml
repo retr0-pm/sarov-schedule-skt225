@@ -2,6 +2,12 @@ name: Fetch Sarov schedule
 
 on:
   workflow_dispatch:
+    inputs:
+      calendar_mode:
+        description: Calendar execution mode
+        type: choice
+        options: [dry-run, off, apply]
+        default: dry-run
   schedule:
     - cron: "17 * * * *"
   push:
@@ -27,8 +33,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: sarov-schedule-skt225-fetch
-  cancel-in-progress: true
+  group: sarov-schedule-skt225-${{ github.ref == 'refs/heads/main' && 'main' || github.ref }}
+  cancel-in-progress: false
 
 env:
   ARTIFACT_RETENTION_DAYS: "1"
@@ -36,11 +42,13 @@ env:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -74,3 +82,94 @@ jobs:
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
           compression-level: 0
           if-no-files-found: error
+
+      - name: Select calendar mode
+        id: calendar_mode
+        if: success()
+        env:
+          REQUESTED: ${{ inputs.calendar_mode }}
+          CONFIGURED: ${{ vars.SKT225_SYNC_MODE || 'off' }}
+        run: |
+          mode=off
+          if [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" != pull_request ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+              mode="$REQUESTED"
+            elif [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+              mode="$CONFIGURED"
+            fi
+          fi
+          if [[ "$mode" == apply && "$CONFIGURED" != apply ]]; then
+            echo "::error::Set SKT225_SYNC_MODE=apply after approving the verified dry-run."
+            exit 1
+          fi
+          case "$mode" in off|dry-run|apply) ;; *) exit 1 ;; esac
+          echo "value=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Reconcile the calendar
+        if: success() && steps.calendar_mode.outputs.value != 'off'
+        env:
+          MODE: ${{ steps.calendar_mode.outputs.value }}
+          SKT225_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.SKT225_GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SKT225_CHATGPT_WRITES_DISABLED: ${{ vars.SKT225_CHATGPT_WRITES_DISABLED }}
+          ALLOW_DELETIONS: ${{ vars.SKT225_ALLOW_DELETIONS }}
+        run: |
+          args=()
+          if [[ "$MODE" == apply && "$ALLOW_DELETIONS" == true ]]; then args+=(--allow-deletes); fi
+          sarov-schedule-calendar output --mode "$MODE" --report sync-report.json "${args[@]}"
+
+      - name: Validate and report with calendar disabled
+        if: success() && steps.calendar_mode.outputs.value == 'off'
+        run: sarov-schedule-calendar output --mode off --report sync-report.json
+
+      - name: Report an upstream failure
+        if: failure()
+        run: |
+          if [[ ! -s sync-report.json ]]; then
+            jq -n '{schema_version:1, started_at:(now|todate), run_id:env.GITHUB_RUN_ID, run_attempt:env.GITHUB_RUN_ATTEMPT,
+              sha:env.GITHUB_SHA, mode:"off", status:"error", validation:"failed", manifest_fingerprint:null,
+              expected:0, managed:0, created:0, updated:0, deleted:0, unchanged:0, conflicts:0, verified:false,
+              errors:["upstream_or_configuration_failed"], changes:[], planned:[]}' > sync-report.json
+            echo "### SKT-225 · fetch, validation or configuration failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload compact sync report
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-report
+          path: sync-report.json
+          retention-days: 7
+          if-no-files-found: error
+
+  publish-report:
+    needs: fetch
+    if: always() && !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sync-report
+      - name: Publish latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_BRANCH: calendar-sync-reports
+        run: |
+          api="repos/$GITHUB_REPOSITORY"
+          if ! gh api "$api/git/ref/heads/$REPORT_BRANCH" --silent; then
+            gh api "$api/git/refs" -f ref="refs/heads/$REPORT_BRANCH" -f sha="$GITHUB_SHA" --silent
+          fi
+          if gh api "$api/contents/latest.json?ref=$REPORT_BRANCH" > previous.json 2> previous.err; then
+            prior=$(jq -r '.content' previous.json | base64 -d | jq -r '.run_id // "0"')
+            if [[ "$prior" =~ ^[0-9]+$ ]] && (( prior > GITHUB_RUN_ID )); then exit 0; fi
+            sha=$(jq -er '.sha' previous.json)
+            args=(-f sha="$sha")
+          else
+            if ! grep -q 'HTTP 404' previous.err; then exit 1; fi
+            args=()
+          fi
+          gh api "$api/contents/latest.json" --method PUT -f branch="$REPORT_BRANCH" \
+            -f message="Calendar report for run $GITHUB_RUN_ID" -f content="$(base64 -w0 sync-report.json)" \
+            "${args[@]}" --silent

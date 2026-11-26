@@ -78,6 +78,7 @@
       "type": "object",
       "required": [
         "source_id",
+        "series_id",
         "group",
         "date",
         "lesson_number",
