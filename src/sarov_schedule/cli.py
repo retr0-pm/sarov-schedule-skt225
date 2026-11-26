@@ -4,11 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
-from .fetcher import DEFAULT_MAX_PDF_BYTES, FetchError, ScheduleDownloader, fetch_to_output
+from .fetcher import COURSE, DEFAULT_MAX_PDF_BYTES, FetchError, ScheduleDownloader, fetch_to_output
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Загрузить расписание второго курса МГУ в Сарове")
+    parser = argparse.ArgumentParser(description="Загрузить расписание МГУ в Сарове")
+    parser.add_argument("--course", type=int, choices=(1, 2), default=COURSE)
     parser.add_argument("--output", type=Path, default=Path("output"), help="Каталог полного результата")
     parser.add_argument(
         "--previous-manifest",
@@ -26,6 +27,7 @@ def main() -> None:
             args.output,
             previous_manifest_path=args.previous_manifest,
             downloader=ScheduleDownloader(max_pdf_bytes=args.max_pdf_bytes),
+            course=args.course,
         )
     except FetchError as exc:
         raise SystemExit(f"Ошибка загрузки расписания: {exc}") from exc

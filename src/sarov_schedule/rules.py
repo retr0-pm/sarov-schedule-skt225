@@ -62,3 +62,13 @@ def apply_skt225_rules(subject: str, lesson_type: str | None = None) -> RuleDeci
 
 def allowed_special_seminar_title() -> str:
     return _ALLOWED_SPECIAL_SEMINAR
+
+
+def apply_vm126_rules(subject: str, lesson_type: str | None = None) -> RuleDecision:
+    normalized = normalize_subject(subject)
+    title = _seminar_title(normalized)
+    if title is None and normalize_subject(lesson_type or "") != "спецсеминар":
+        return RuleDecision(True, "included", normalized)
+    seminar = title if title is not None else normalized
+    include = seminar == "вычислительная гидродинамика"
+    return RuleDecision(include, "allowed_special_seminar" if include else "excluded_special_seminar", normalized)

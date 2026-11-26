@@ -9,9 +9,10 @@ from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from .rules import RULES_VERSION, apply_skt225_rules, normalize_subject
+from .profiles import SKT225, Profile
+from .rules import apply_skt225_rules, apply_vm126_rules, normalize_subject
 
-GROUP = "СКТ-225"
+GROUP = SKT225.group
 TIMEZONE = "Europe/Moscow"
 SCHEDULE_SCHEMA_VERSION = 1
 GROUP_RE = re.compile(r"^[А-ЯЁA-Z]{1,12}-\d{3}$")
@@ -307,7 +308,9 @@ def _split_entries(lines: Sequence[TextLine]) -> list[list[TextLine]]:
     current_has_room = False
     for line in lines:
         starts_seminar = normalize_subject(line.text).startswith("спецсеминар")
-        if current and (starts_seminar or current_has_room):
+        if current and (current_has_room or (
+            starts_seminar and any(_normalize_clock(item.text) is None for item in current)
+        )):
             entries.append(current)
             current = []
             current_has_room = False
@@ -367,16 +370,18 @@ def _parse_entry(lines: Sequence[TextLine]) -> tuple[dict[str, Any] | None, str 
     }, None
 
 
-def recognize_page_geometry(geometry: PageGeometry, *, semester: str, source_pdf: str) -> PageResult:
+def recognize_page_geometry(
+    geometry: PageGeometry, *, semester: str, source_pdf: str, group: str = GROUP,
+) -> PageResult:
     ambiguities: list[dict[str, Any]] = []
-    headers = [word for word in geometry.words if word.text.strip().upper() == GROUP]
+    headers = [word for word in geometry.words if word.text.strip().upper() == group]
     if len(headers) != 1:
         ambiguities.append(
             {
                 "code": "target_group_header_count",
                 "source_pdf": source_pdf,
                 "page": geometry.page_number,
-                "detail": f"Ожидался один заголовок {GROUP}, найдено {len(headers)}",
+                "detail": f"Ожидался один заголовок {group}, найдено {len(headers)}",
             }
         )
         return PageResult(geometry.page_number, None, [], ambiguities)
@@ -436,7 +441,7 @@ def recognize_page_geometry(geometry: PageGeometry, *, semester: str, source_pdf
                     "source_pdf": source_pdf,
                     "page": geometry.page_number,
                     "lesson_number": row.lesson_number,
-                    "detail": "Нет границ ячейки СКТ-225",
+                    "detail": f"Нет границ ячейки {group}",
                 }
             )
             index += 1
@@ -483,7 +488,7 @@ def recognize_page_geometry(geometry: PageGeometry, *, semester: str, source_pdf
             start = parsed.pop("explicit_start") or span_rows[0].start
             raw_events.append(
                 {
-                    "group": GROUP,
+                    "group": group,
                     "date": page_date.isoformat(),
                     "lesson_number": lesson_numbers[0] if len(lesson_numbers) == 1 else lesson_numbers,
                     "start": start,
@@ -514,7 +519,7 @@ def _manifest_fingerprint(manifest: dict[str, Any]) -> str:
 def _series_id(event: dict[str, Any]) -> str:
     payload = "|".join(
         [
-            GROUP,
+            event["group"],
             normalize_subject(event["subject"]),
             normalize_subject(event.get("teacher") or ""),
             normalize_subject(event.get("lesson_type") or ""),
@@ -524,12 +529,13 @@ def _series_id(event: dict[str, Any]) -> str:
 
 
 def _source_id(
-    *, academic_year: str, semester: str, week_number: int | None, series_id: str, occurrence: int
+    *, academic_year: str, semester: str, week_number: int | None, series_id: str, occurrence: int,
+    profile: Profile = SKT225,
 ) -> str:
     payload = "|".join(
-        [academic_year, normalize_subject(semester), GROUP, str(week_number), series_id, str(occurrence)]
+        [academic_year, normalize_subject(semester), profile.group, str(week_number), series_id, str(occurrence)]
     )
-    return "skt225-v3-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+    return profile.rules_version + "-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
 def _week_id(dates: Iterable[date]) -> str:
@@ -559,6 +565,7 @@ def build_schedule(
     generated_at: datetime | None = None,
     previous_schedule_path: Path | None = None,
     geometry_loader: Any = extract_pdf_geometry,
+    profile: Profile = SKT225,
 ) -> dict[str, Any]:
     semester = manifest.get("semester")
     if not isinstance(semester, str):
@@ -566,6 +573,9 @@ def build_schedule(
     start_year, end_year = _academic_year(semester)
     academic_year = f"{start_year}/{end_year}"
     previous_schedule, previous_digest = _load_previous_schedule(previous_schedule_path)
+    if previous_schedule is not None and previous_schedule.get("group") != profile.group:
+        raise RecognitionError("Предыдущее расписание относится к другой группе")
+    filter_event = apply_skt225_rules if profile == SKT225 else apply_vm126_rules
     previous_verified_weeks = {
         item.get("week_id") for item in (previous_schedule or {}).get("weeks", []) if item.get("status") == "verified"
     }
@@ -582,7 +592,7 @@ def build_schedule(
             raise RecognitionError("В manifest.json есть неполная запись PDF")
         path = output_dir / filename
         page_results = [
-            recognize_page_geometry(geometry, semester=semester, source_pdf=filename)
+            recognize_page_geometry(geometry, semester=semester, source_pdf=filename, group=profile.group)
             for geometry in geometry_loader(path)
         ]
         dates = [result.page_date for result in page_results if result.page_date is not None]
@@ -599,7 +609,7 @@ def build_schedule(
             for event in result.raw_events:
                 event["source_pdf_sha256"] = sha256
                 event["week_id"] = week_id
-                decision = apply_skt225_rules(event["subject"], event.get("lesson_type"))
+                decision = filter_event(event["subject"], event.get("lesson_type"))
                 if decision.include:
                     included_for_week.append(event)
                 else:
@@ -657,6 +667,7 @@ def build_schedule(
             week_number=week_by_id[event["week_id"]]["week_number"],
             series_id=series_id,
             occurrence=occurrences[key],
+            profile=profile,
         )
 
     week_records.sort(key=lambda item: (item["week_number"] is None, item["week_number"] or 10_000))
@@ -664,13 +675,13 @@ def build_schedule(
     timestamp = (generated_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     schedule = {
         "schema_version": SCHEDULE_SCHEMA_VERSION,
-        "rules_version": RULES_VERSION,
+        "rules_version": profile.rules_version,
         "generated_at": timestamp,
         "source": manifest.get("source"),
         "manifest_fingerprint": _manifest_fingerprint(manifest),
         "academic_year": academic_year,
         "semester": semester,
-        "group": GROUP,
+        "group": profile.group,
         "timezone": TIMEZONE,
         "recognition": {
             "status": overall_status,
@@ -696,11 +707,11 @@ def build_schedule(
             else None
         ),
     }
-    validate_schedule(schedule, manifest)
+    validate_schedule(schedule, manifest, profile=profile)
     return schedule
 
 
-def validate_schedule(schedule: dict[str, Any], manifest: dict[str, Any]) -> None:
+def validate_schedule(schedule: dict[str, Any], manifest: dict[str, Any], *, profile: Profile = SKT225) -> None:
     required_top = {
         "schema_version",
         "rules_version",
@@ -720,10 +731,12 @@ def validate_schedule(schedule: dict[str, Any], manifest: dict[str, Any]) -> Non
     missing = sorted(required_top - schedule.keys())
     if missing:
         raise RecognitionError(f"schedule.json не содержит поля: {missing}")
-    if schedule["schema_version"] != SCHEDULE_SCHEMA_VERSION or schedule["rules_version"] != RULES_VERSION:
+    if schedule["schema_version"] != SCHEDULE_SCHEMA_VERSION or schedule["rules_version"] != profile.rules_version:
         raise RecognitionError("Неподдерживаемая версия schedule.json или правил")
-    if schedule["group"] != GROUP or schedule["timezone"] != TIMEZONE:
+    if schedule["group"] != profile.group or schedule["timezone"] != TIMEZONE:
         raise RecognitionError("Некорректная группа или часовой пояс")
+    if manifest.get("course", profile.course) != profile.course:
+        raise RecognitionError("Манифест относится к другому курсу")
     if schedule["manifest_fingerprint"] != _manifest_fingerprint(manifest):
         raise RecognitionError("schedule.json относится к другому manifest.json")
     if not isinstance(schedule["events"], list) or not isinstance(schedule["weeks"], list):
@@ -798,12 +811,13 @@ def write_schedule(
     output_dir: Path,
     *,
     previous_schedule_path: Path | None = None,
+    profile: Profile = SKT225,
 ) -> dict[str, Any]:
     try:
         manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RecognitionError(f"Не удалось прочитать manifest.json: {exc}") from exc
-    schedule = build_schedule(output_dir, manifest, previous_schedule_path=previous_schedule_path)
+    schedule = build_schedule(output_dir, manifest, previous_schedule_path=previous_schedule_path, profile=profile)
     schedule_path = output_dir / "schedule.json"
     ambiguities_path = output_dir / "ambiguities.json"
     schedule_tmp = schedule_path.with_suffix(".json.tmp")
@@ -813,7 +827,7 @@ def write_schedule(
         json.dumps(
             {
                 "schema_version": 1,
-                "rules_version": RULES_VERSION,
+                "rules_version": profile.rules_version,
                 "status": schedule["recognition"]["status"],
                 "safe_for_deletions": schedule["recognition"]["safe_for_deletions"],
                 "items": schedule["ambiguities"],

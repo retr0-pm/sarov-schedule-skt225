@@ -340,6 +340,7 @@ def build_manifest(
     files: list[dict[str, Any]],
     previous_manifest: dict[str, Any] | None = None,
     fetched_at: datetime | None = None,
+    course: int = COURSE,
 ) -> dict[str, Any]:
     annotate_changes(files, previous_manifest)
     timestamp = (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -348,7 +349,7 @@ def build_manifest(
         "fetched_at": timestamp.isoformat().replace("+00:00", "Z"),
         "source": SCHEDULE_URL,
         "semester": semester,
-        "course": COURSE,
+        "course": course,
         "page_content_type": page_content_type,
         "pdf_count": len(files),
         "files": files,
@@ -390,6 +391,7 @@ def fetch_to_output(
     *,
     previous_manifest_path: Path | None = None,
     downloader: ScheduleDownloader | None = None,
+    course: int = COURSE,
 ) -> dict[str, Any]:
     """Собрать полный результат в staging и заменить output только после успеха."""
 
@@ -400,7 +402,9 @@ def fetch_to_output(
     staging = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.staging-", dir=output_dir.parent))
     try:
         page_text, page_content_type = downloader.fetch_page()
-        semester, links = extract_course_pdf_links(page_text, course=COURSE)
+        if previous is not None and previous.get("course") != course:
+            raise FetchError("Предыдущий манифест относится к другому курсу")
+        semester, links = extract_course_pdf_links(page_text, course=course)
         files: list[dict[str, Any]] = []
         for index, link in enumerate(links, start=1):
             data, content_type, final_url = downloader.fetch_pdf(link["source_url"])
@@ -430,6 +434,7 @@ def fetch_to_output(
             page_content_type=page_content_type,
             files=files,
             previous_manifest=previous,
+            course=course,
         )
         (staging / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

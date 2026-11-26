@@ -8,14 +8,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from .rules import RULES_VERSION, normalize_subject
+from .profiles import SKT225, Profile
+from .rules import normalize_subject
 
 CALENDAR_ID = "f311eb844a8fcb81b18529a77e2ce85057a80d90d467bbe3b60b4202eb586da8@group.calendar.google.com"
-MANAGED_BY = "sarov-schedule-skt225"
 MOSCOW = ZoneInfo("Europe/Moscow")
 HORIZON = timedelta(days=14)
 FIELDS = ("managed_by", "source_id", "series_id", "week_id", "rules_version", "source_pdf_sha256")
-SOURCE = re.compile(r"skt225-v3-[0-9a-f]{24}")
 SERIES = re.compile(r"series-[0-9a-f]{24}")
 SHA = re.compile(r"[0-9a-f]{64}")
 WEEK = re.compile(r"\d{4}-\d\d-\d\d/\d{4}-\d\d-\d\d")
@@ -58,7 +57,7 @@ def window(schedule: dict) -> tuple[datetime, datetime]:
             + timedelta(days=1) + HORIZON)
 
 
-def markers(raw: dict) -> dict[str, str] | None:
+def markers(raw: dict, profile: Profile = SKT225) -> dict[str, str] | None:
     values: dict[str, list[str]] = defaultdict(list)
     description = raw.get("description", "")
     if not isinstance(description, str):
@@ -68,27 +67,29 @@ def markers(raw: dict) -> dict[str, str] | None:
         if separator and key.strip() in FIELDS:
             values[key.strip()].append(value.strip())
     private = raw.get("extendedProperties", {}).get("private", {})
-    if private.get("managed_by") == MANAGED_BY and MANAGED_BY not in values["managed_by"]:
+    owner = profile.managed_by
+    if private.get("managed_by") == owner and owner not in values["managed_by"]:
         raise EventConflict("managed_description_marker_missing")
-    if MANAGED_BY not in values["managed_by"]:
+    if owner not in values["managed_by"]:
         return None
     if any(len(values[key]) != 1 for key in FIELDS):
         raise EventConflict("missing_or_duplicate_managed_marker")
     result = {key: values[key][0] for key in FIELDS}
     week_bounds(result["week_id"])
-    if not (SOURCE.fullmatch(result["source_id"]) and SERIES.fullmatch(result["series_id"])
-            and SHA.fullmatch(result["source_pdf_sha256"]) and result["rules_version"] == RULES_VERSION):
+    if not (re.fullmatch(fr"{re.escape(profile.rules_version)}-[0-9a-f]{{24}}", result["source_id"])
+            and SERIES.fullmatch(result["series_id"])
+            and SHA.fullmatch(result["source_pdf_sha256"]) and result["rules_version"] == profile.rules_version):
         raise EventConflict("invalid_managed_marker")
     if any(key in private and private[key] != result[key] for key in FIELDS):
         raise EventConflict("conflicting_private_marker")
     return result
 
 
-def payload(event: dict) -> dict:
+def payload(event: dict, profile: Profile = SKT225) -> dict:
     # Keep the six legacy markers so partially imported calendars need no migration.
-    lines = ["Группа: СКТ-225", f"Преподаватель: {event['teacher'] or 'не указан'}",
+    lines = [f"Группа: {profile.group}", f"Преподаватель: {event['teacher'] or 'не указан'}",
              f"Тип занятия: {event['lesson_type'] or 'не указан'}",
-             f"managed_by={MANAGED_BY}", f"rules_version={RULES_VERSION}"]
+             f"managed_by={profile.managed_by}", f"rules_version={profile.rules_version}"]
     lines.extend(f"{key}={event[key]}" for key in ("source_id", "series_id", "week_id", "source_pdf_sha256"))
     return {
         "summary": event["subject"], "location": event["room"] or "",
@@ -148,18 +149,17 @@ class Plan:
 
 
 def matches(old: Existing, desired: dict) -> bool:
-    target = payload(desired)
     return (
-        (old.start, old.end) == interval(target)
-        and old.raw["summary"] == target["summary"]
-        and (old.raw.get("location") or "") == target["location"]
+        (old.start, old.end) == (moment(desired["date"], desired["start"]), moment(desired["date"], desired["end"]))
+        and old.raw["summary"] == desired["subject"]
+        and (old.raw.get("location") or "") == (desired["room"] or "")
         and all(old.markers[key] == desired[key] for key in ("source_id", "series_id", "week_id"))
         and human_field(old.raw, "Преподаватель") == (desired["teacher"] or "")
         and human_field(old.raw, "Тип занятия") == (desired["lesson_type"] or "")
     )
 
 
-def has_external_attendance(raw: dict) -> bool:
+def has_external_attendance(raw: dict, calendar_id: str) -> bool:
     attendees = raw.get("attendees", [])
     if raw.get("attendeesOmitted"):
         return True
@@ -171,13 +171,13 @@ def has_external_attendance(raw: dict) -> bool:
     creator = (raw.get("creator") or {}).get("email")
     organizer = (raw.get("organizer") or {}).get("email")
     return not (
-        organizer == CALENDAR_ID and creator and attendee.get("email") == creator
+        organizer == calendar_id and creator and attendee.get("email") == creator
         and not attendee.get("resource") and not attendee.get("additionalGuests")
     )
 
 
-def parse_existing(raw: dict) -> Existing | None:
-    meta = markers(raw)
+def parse_existing(raw: dict, profile: Profile = SKT225, calendar_id: str = CALENDAR_ID) -> Existing | None:
+    meta = markers(raw, profile)
     if meta is None:
         return None
     try:
@@ -191,7 +191,7 @@ def parse_existing(raw: dict) -> Existing | None:
         raise EventConflict("managed_event_not_confirmed")
     if raw.get("recurrence") or raw.get("recurringEventId") or raw.get("locked"):
         raise EventConflict("managed_event_recurring_or_locked")
-    if has_external_attendance(raw) or raw.get("conferenceData") or raw.get("hangoutLink"):
+    if has_external_attendance(raw, calendar_id) or raw.get("conferenceData") or raw.get("hangoutLink"):
         raise EventConflict("managed_event_has_guests_or_conference")
     if not raw.get("id") or not raw.get("etag") or not isinstance(raw.get("summary"), str):
         raise EventConflict("managed_event_missing_identity_or_etag")
@@ -202,7 +202,10 @@ def parse_existing(raw: dict) -> Existing | None:
     return Existing(raw, meta, start, end)
 
 
-def build_plan(schedule: dict, calendar: list[dict], now: datetime) -> Plan:
+def build_plan(
+    schedule: dict, calendar: list[dict], now: datetime, *,
+    profile: Profile = SKT225, calendar_id: str = CALENDAR_ID,
+) -> Plan:
     if now.utcoffset() is None:
         raise ValueError("A timezone-aware cutoff is required")
     future = {e["source_id"]: e for e in schedule["events"] if moment(e["date"], e["start"]) >= now}
@@ -214,7 +217,7 @@ def build_plan(schedule: dict, calendar: list[dict], now: datetime) -> Plan:
     seen_ids: set[str] = set()
     for raw in calendar:
         try:
-            old = parse_existing(raw)
+            old = parse_existing(raw, profile, calendar_id)
         except EventConflict as exc:
             plan.conflicts.append(str(exc))
             continue
@@ -274,7 +277,7 @@ def match_changes(plan: Plan, missing: dict[str, dict], stale: dict[str, Existin
 
     candidates = {}
     for key, desired in missing.items():
-        start, end = interval(payload(desired))
+        start, end = (moment(desired["date"], desired["start"]), moment(desired["date"], desired["end"]))
         title = normalize_subject(desired["subject"])
         similar = by_series[desired["series_id"]]
         nearby = [(ident, old) for ident, old in similar if abs(start - old.start) <= HORIZON]

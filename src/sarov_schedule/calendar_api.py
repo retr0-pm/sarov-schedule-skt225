@@ -14,8 +14,8 @@ from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
 from .calendar_sync import CALENDAR_ID, MOSCOW, SyncError
+from .profiles import SKT225, Profile
 
-EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/" + quote(CALENDAR_ID, safe="") + "/events"
 SCOPE = "https://www.googleapis.com/auth/calendar.events"
 FORBIDDEN_REASONS = {
     "SERVICE_DISABLED": "google_calendar_api_disabled",
@@ -58,22 +58,30 @@ def forbidden_diagnostic(response: requests.Response) -> str | None:
     return None
 
 
-def event_id(source_id: str) -> str:
+def event_id(source_id: str, profile: Profile = SKT225) -> str:
     # Google accepts lowercase base32hex. Hex is a subset of that alphabet.
-    return "skt225" + hashlib.sha256(source_id.encode("ascii")).hexdigest()
+    return profile.name + hashlib.sha256(source_id.encode("ascii")).hexdigest()
 
 
 class Calendar:
-    def __init__(self, session, *, write: bool = False, sleep=time.sleep):
+    def __init__(
+        self, session, *, write: bool = False, sleep=time.sleep,
+        profile: Profile = SKT225, calendar_id: str = CALENDAR_ID,
+    ):
+        if (profile == SKT225) != (calendar_id == CALENDAR_ID):
+            raise SyncError("calendar_not_isolated_from_skt225")
+        self.url = "https://www.googleapis.com/calendar/v3/calendars/" + quote(calendar_id, safe="") + "/events"
+        self.profile = profile
+        self.calendar_id = calendar_id
         self.session = session
         self.write = write
         self.sleep = sleep
 
     @classmethod
-    def connect(cls, *, write: bool) -> Calendar:
+    def connect(cls, *, write: bool, profile: Profile = SKT225, calendar_id: str = CALENDAR_ID) -> Calendar:
         scopes = [SCOPE if write else SCOPE + ".readonly"]
         try:
-            key = os.environ.get("SKT225_GOOGLE_SERVICE_ACCOUNT_JSON")
+            key = os.environ.get(f"{profile.name.upper()}_GOOGLE_SERVICE_ACCOUNT_JSON")
             if key:
                 settings = json.loads(key)
                 if (settings.get("type") != "service_account"
@@ -82,14 +90,15 @@ class Calendar:
                 credentials = service_account.Credentials.from_service_account_info(settings, scopes=scopes)
             else:
                 raise ValueError("Missing service account configuration")
-            return cls(AuthorizedSession(credentials, max_refresh_attempts=0, refresh_timeout=15), write=write)
+            return cls(AuthorizedSession(credentials, max_refresh_attempts=0, refresh_timeout=15),
+                       write=write, profile=profile, calendar_id=calendar_id)
         except (GoogleAuthError, KeyError, ValueError, TypeError, AttributeError):
             raise SyncError("google_credentials_missing_or_invalid") from None
 
     def request(self, method: str, ident: str = "", **kwargs) -> dict | None:
         if method != "GET" and not self.write:
             raise SyncError("write_in_read_only_mode")
-        url = EVENTS_URL + ("/" + quote(ident, safe="") if ident else "")
+        url = self.url + ("/" + quote(ident, safe="") if ident else "")
         attempts = 4 if method == "GET" else 1
         for attempt in range(attempts):
             try:
@@ -132,7 +141,7 @@ class Calendar:
         for _ in range(50):
             page = self.request("GET", params=params)
             if (page is None or page.get("timeZone") != MOSCOW.key
-                    or page.get("summary") != "Расписание СКТ-225"
+                    or page.get("summary") != self.profile.calendar_title
                     or page.get("accessRole") not in (("writer", "owner") if self.write
                                                      else ("reader", "writer", "owner"))):
                 raise SyncError("calendar_identity_or_access_mismatch")
