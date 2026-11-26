@@ -15,7 +15,7 @@ from google.auth.exceptions import RefreshError
 
 from sarov_schedule.calendar_api import Calendar, HTTPError, event_id
 from sarov_schedule.calendar_cli import load_schedule, reconcile, run
-from sarov_schedule.calendar_sync import MOSCOW, SyncError, build_plan, payload
+from sarov_schedule.calendar_sync import CALENDAR_ID, MOSCOW, SyncError, build_plan, payload
 from sarov_schedule.recognizer import build_schedule, write_schedule
 from test_recognizer import six_week_manifest_and_loader
 
@@ -125,6 +125,29 @@ class ReconciliationTests(unittest.TestCase):
         result = sync(cal, schedule(lesson(source_pdf_sha256="b" * 64)))
         self.assertEqual((cal.writes, result["unchanged"]), ([], 1))
 
+    def test_existing_google_timezone_alias_is_compared_by_instant(self):
+        old = saved(lesson(), "legacy")
+        old["start"] = {"dateTime": "2026-11-23T06:00:00Z", "timeZone": "UTC"}
+        old["end"] = {"dateTime": "2026-11-23T07:35:00Z", "timeZone": "UTC"}
+        cal = FakeCalendar([old])
+        self.assertEqual(sync(cal, schedule(lesson()))["unchanged"], 1)
+        self.assertEqual(cal.writes, [])
+
+    def test_legacy_creator_attendee_is_preserved_and_blocks_deletion(self):
+        owner = "calendar-owner@example.test"
+        attendees = [{"email": owner, "responseStatus": "accepted"}]
+        raw = {**saved(lesson(), "legacy"), "attendees": attendees,
+               "creator": {"email": owner}, "organizer": {"email": CALENDAR_ID}}
+        cal = FakeCalendar([raw])
+        result = sync(cal, schedule(lesson(room="Б202")))
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(cal.events["legacy"]["attendees"], attendees)
+        with self.assertRaisesRegex(SyncError, "deletion_requires_manual_review_attendees_present"):
+            sync(cal, schedule(), deletes=True)
+
+        invited = {**raw, "attendees": [{"email": "guest@example.test"}]}
+        self.assertEqual(sync(FakeCalendar([invited]), schedule(lesson()))["status"], "conflict")
+
     def test_presentation_variant_updates_but_unrelated_replacement_is_held(self):
         cal = FakeCalendar([saved(lesson(), "legacy")])
         variant = lesson(2, series=2, subject="Основы теории графов (семинар) online", lesson_type="семинар")
@@ -207,6 +230,32 @@ def response(status, data=None, headers=None):
 
 
 class TransportTests(unittest.TestCase):
+    def test_forbidden_reports_only_known_diagnostics(self):
+        cases = (
+            ({"details": [{"reason": "SERVICE_DISABLED", "metadata": {"consumer": "private-project"}}],
+              "errors": [{"reason": "forbidden"}]}, "google_calendar_api_disabled"),
+            ({"errors": [{"reason": "insufficientPermissions"}]}, "google_calendar_permission_insufficient"),
+            ({"errors": [{"reason": "unrecognized private content"}]}, "calendar_http_403"),
+            ({"details": [None, {"reason": {}}], "errors": "bad"}, "calendar_http_403"),
+        )
+        for error, diagnostic in cases:
+            with self.subTest(diagnostic=diagnostic):
+                session = Mock()
+                session.request.return_value = response(403, {"error": {"message": "private message", **error}})
+                with self.assertRaisesRegex(HTTPError, f"^{diagnostic}$"):
+                    Calendar(session).get("id")
+                session.request.assert_called_once()
+
+    def test_forbidden_rate_limit_retries_read(self):
+        session = Mock()
+        session.request.side_effect = [
+            response(403, {"error": {"errors": [{"reason": "rateLimitExceeded"}]}}),
+            response(200, {"id": "example"}),
+        ]
+        sleep = Mock()
+        self.assertEqual(Calendar(session, sleep=sleep).get("example"), {"id": "example"})
+        sleep.assert_called_once_with(1)
+
     def test_pagination_retry_and_scope(self):
         session = Mock()
         metadata = {"accessRole": "reader", "timeZone": "Europe/Moscow", "summary": "Расписание СКТ-225"}
