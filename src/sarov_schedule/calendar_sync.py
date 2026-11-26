@@ -26,6 +26,10 @@ class SyncError(RuntimeError):
     """An error with a fixed, safe-to-publish message."""
 
 
+class EventConflict(ValueError):
+    """A fixed diagnostic for an event that cannot be managed safely."""
+
+
 def week_bounds(week: str) -> tuple[date, date]:
     if not isinstance(week, str) or not WEEK.fullmatch(week):
         raise ValueError("Invalid week")
@@ -58,25 +62,25 @@ def markers(raw: dict) -> dict[str, str] | None:
     values: dict[str, list[str]] = defaultdict(list)
     description = raw.get("description", "")
     if not isinstance(description, str):
-        raise ValueError("Unreadable description")
+        raise EventConflict("unreadable_event_description")
     for line in description.splitlines():
         key, separator, value = line.partition("=")
         if separator and key.strip() in FIELDS:
             values[key.strip()].append(value.strip())
     private = raw.get("extendedProperties", {}).get("private", {})
     if private.get("managed_by") == MANAGED_BY and MANAGED_BY not in values["managed_by"]:
-        raise ValueError("Managed event lacks description marker")
+        raise EventConflict("managed_description_marker_missing")
     if MANAGED_BY not in values["managed_by"]:
         return None
     if any(len(values[key]) != 1 for key in FIELDS):
-        raise ValueError("Missing or duplicate marker")
+        raise EventConflict("missing_or_duplicate_managed_marker")
     result = {key: values[key][0] for key in FIELDS}
     week_bounds(result["week_id"])
     if not (SOURCE.fullmatch(result["source_id"]) and SERIES.fullmatch(result["series_id"])
             and SHA.fullmatch(result["source_pdf_sha256"]) and result["rules_version"] == RULES_VERSION):
-        raise ValueError("Invalid marker")
+        raise EventConflict("invalid_managed_marker")
     if any(key in private and private[key] != result[key] for key in FIELDS):
-        raise ValueError("Conflicting private marker")
+        raise EventConflict("conflicting_private_marker")
     return result
 
 
@@ -105,7 +109,7 @@ def human_field(raw: dict, label: str) -> str:
     prefix = f"{label}:"
     values = [line[len(prefix):].strip() for line in raw["description"].splitlines() if line.startswith(prefix)]
     if len(set(values)) > 1:
-        raise ValueError("Conflicting event descriptions")
+        raise EventConflict("conflicting_event_description_fields")
     return "" if not values or values[0] == "не указан" else values[0]
 
 
@@ -159,15 +163,23 @@ def parse_existing(raw: dict) -> Existing | None:
     meta = markers(raw)
     if meta is None:
         return None
-    start, end = interval(raw)
+    try:
+        start, end = interval(raw)
+    except (KeyError, ValueError, TypeError, AttributeError):
+        raise EventConflict("invalid_managed_event_interval") from None
     first, last = week_bounds(meta["week_id"])
-    if (not first <= start.astimezone(MOSCOW).date() <= last
-            or raw.get("status") != "confirmed"
-            or raw.get("recurrence") or raw.get("recurringEventId") or raw.get("locked")
-            or raw.get("attendees") or raw.get("conferenceData") or raw.get("hangoutLink")
-            or not raw.get("id") or not raw.get("etag") or not isinstance(raw.get("summary"), str)
-            or any(raw[key].get("timeZone") not in (None, MOSCOW.key) for key in ("start", "end"))):
-        raise ValueError("Unsupported managed event")
+    if not first <= start.astimezone(MOSCOW).date() <= last:
+        raise EventConflict("managed_event_outside_marked_week")
+    if raw.get("status") != "confirmed":
+        raise EventConflict("managed_event_not_confirmed")
+    if raw.get("recurrence") or raw.get("recurringEventId") or raw.get("locked"):
+        raise EventConflict("managed_event_recurring_or_locked")
+    if raw.get("attendees") or raw.get("conferenceData") or raw.get("hangoutLink"):
+        raise EventConflict("managed_event_has_guests_or_conference")
+    if not raw.get("id") or not raw.get("etag") or not isinstance(raw.get("summary"), str):
+        raise EventConflict("managed_event_missing_identity_or_etag")
+    # Single events identify their times by RFC3339 instants. Older connector
+    # writes can carry an equivalent timezone alias or serialize in UTC.
     human_field(raw, "Преподаватель")
     human_field(raw, "Тип занятия")
     return Existing(raw, meta, start, end)
@@ -186,6 +198,9 @@ def build_plan(schedule: dict, calendar: list[dict], now: datetime) -> Plan:
     for raw in calendar:
         try:
             old = parse_existing(raw)
+        except EventConflict as exc:
+            plan.conflicts.append(str(exc))
+            continue
         except (KeyError, TypeError, ValueError, AttributeError):
             plan.conflicts.append("malformed_managed_event")
             continue

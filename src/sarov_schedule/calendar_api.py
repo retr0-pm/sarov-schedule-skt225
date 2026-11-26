@@ -17,12 +17,45 @@ from .calendar_sync import CALENDAR_ID, MOSCOW, SyncError
 
 EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/" + quote(CALENDAR_ID, safe="") + "/events"
 SCOPE = "https://www.googleapis.com/auth/calendar.events"
+FORBIDDEN_REASONS = {
+    "SERVICE_DISABLED": "google_calendar_api_disabled",
+    "accessNotConfigured": "google_calendar_api_disabled",
+    "ACCESS_TOKEN_SCOPE_INSUFFICIENT": "google_calendar_scope_insufficient",
+    "insufficientPermissions": "google_calendar_permission_insufficient",
+    "forbidden": "google_calendar_access_forbidden",
+    "domainPolicy": "google_calendar_access_restricted_by_policy",
+    "rateLimitExceeded": "google_calendar_rate_limited",
+    "userRateLimitExceeded": "google_calendar_rate_limited",
+    "quotaExceeded": "google_calendar_quota_exceeded",
+    "forbiddenForNonOrganizer": "google_calendar_organizer_required",
+}
 
 
 class HTTPError(SyncError):
-    def __init__(self, status: int):
+    def __init__(self, status: int, diagnostic: str | None = None):
         self.status = status
-        super().__init__(f"calendar_http_{status}")
+        super().__init__(diagnostic or f"calendar_http_{status}")
+
+
+def forbidden_diagnostic(response: requests.Response) -> str | None:
+    # Google can put reason codes in legacy errors or structured ErrorInfo.
+    # Publish only fixed messages, without error messages or project metadata.
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return None
+    for key in ("details", "errors"):
+        items = error.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            reason = item.get("reason") if isinstance(item, dict) else None
+            if isinstance(reason, str) and reason in FORBIDDEN_REASONS:
+                return FORBIDDEN_REASONS[reason]
+    return None
 
 
 def event_id(source_id: str) -> str:
@@ -72,8 +105,9 @@ class Calendar:
                     if not isinstance(data, dict):
                         raise SyncError("calendar_invalid_response")
                     return data
-                error = HTTPError(status)
-                transient = status == 429 or 500 <= status < 600
+                diagnostic = forbidden_diagnostic(response) if status == 403 else None
+                error = HTTPError(status, diagnostic)
+                transient = status == 429 or 500 <= status < 600 or diagnostic == "google_calendar_rate_limited"
                 retry_after = response.headers.get("Retry-After", "")
             except GoogleAuthError:
                 raise SyncError("google_authentication_failed") from None
