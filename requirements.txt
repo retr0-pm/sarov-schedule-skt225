@@ -1,2 +1,4 @@
 pdfplumber>=0.11.0,<1
 requests>=2.32.0,<3
+google-auth[requests]>=2.40,<3
+jsonschema[format]>=4.23,<5
