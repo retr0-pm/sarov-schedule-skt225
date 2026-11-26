@@ -1,24 +1,38 @@
 {
   "schema_version": 1,
-  "started_at": "2026-11-26T23:26:48.395086+00:00",
-  "run_id": "45910935145",
+  "started_at": "2026-11-26T23:27:29.862326+00:00",
+  "run_id": "45910975708",
   "run_attempt": "1",
   "sha": "dd852b7a028cb546dfbb54b2c2a19fadfec0a3c2",
   "manifest_fingerprint": "81104b09a17fa65ccf65b6eab1a8c5994e9ac2aced293c4f86db65127c8d2801",
   "validation": "verified",
   "expected": 71,
-  "managed": 0,
+  "managed": 71,
   "created": 0,
-  "updated": 0,
+  "updated": 1,
   "deleted": 0,
-  "unchanged": 0,
+  "unchanged": 70,
   "conflicts": 0,
   "deletions_blocked": 0,
   "overlapping_creates_blocked": 0,
-  "verified": false,
+  "verified": true,
   "errors": [],
-  "changes": [],
-  "planned": [],
-  "mode": "off",
-  "status": "disabled"
+  "changes": [
+    {
+      "kind": "update",
+      "date": "2026-11-27",
+      "start": "12:30",
+      "subject": "Высокопроизводительные вычисления на кластерах с использованием графических ускорителей"
+    }
+  ],
+  "planned": [
+    {
+      "kind": "update",
+      "date": "2026-11-27",
+      "start": "12:30",
+      "subject": "Высокопроизводительные вычисления на кластерах с использованием графических ускорителей"
+    }
+  ],
+  "mode": "apply",
+  "status": "success"
 }
