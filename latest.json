@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "started_at": "2026-11-26T23:12:34.754537+00:00",
-  "run_id": "45909497627",
+  "started_at": "2026-11-26T23:17:04.043062+00:00",
+  "run_id": "45909956619",
   "run_attempt": "1",
-  "sha": "b513286f0a4d72881c4f9ee58ed659aef729e004",
+  "sha": "13fd7161d30eb68c577051fb1faccb72cc945b07",
   "manifest_fingerprint": "81104b09a17fa65ccf65b6eab1a8c5994e9ac2aced293c4f86db65127c8d2801",
   "validation": "verified",
   "expected": 71,
@@ -12,15 +12,13 @@
   "updated": 0,
   "deleted": 0,
   "unchanged": 0,
-  "conflicts": 69,
+  "conflicts": 0,
   "deletions_blocked": 0,
   "overlapping_creates_blocked": 0,
   "verified": false,
-  "errors": [
-    "malformed_managed_event"
-  ],
+  "errors": [],
   "changes": [],
   "planned": [],
-  "mode": "dry-run",
-  "status": "conflict"
+  "mode": "off",
+  "status": "disabled"
 }
