@@ -159,6 +159,23 @@ def matches(old: Existing, desired: dict) -> bool:
     )
 
 
+def has_external_attendance(raw: dict) -> bool:
+    attendees = raw.get("attendees", [])
+    if raw.get("attendeesOmitted"):
+        return True
+    if not attendees:
+        return False
+    if not isinstance(attendees, list) or len(attendees) != 1 or not isinstance(attendees[0], dict):
+        return True
+    attendee = attendees[0]
+    creator = (raw.get("creator") or {}).get("email")
+    organizer = (raw.get("organizer") or {}).get("email")
+    return not (
+        organizer == CALENDAR_ID and creator and attendee.get("email") == creator
+        and not attendee.get("resource") and not attendee.get("additionalGuests")
+    )
+
+
 def parse_existing(raw: dict) -> Existing | None:
     meta = markers(raw)
     if meta is None:
@@ -174,7 +191,7 @@ def parse_existing(raw: dict) -> Existing | None:
         raise EventConflict("managed_event_not_confirmed")
     if raw.get("recurrence") or raw.get("recurringEventId") or raw.get("locked"):
         raise EventConflict("managed_event_recurring_or_locked")
-    if raw.get("attendees") or raw.get("conferenceData") or raw.get("hangoutLink"):
+    if has_external_attendance(raw) or raw.get("conferenceData") or raw.get("hangoutLink"):
         raise EventConflict("managed_event_has_guests_or_conference")
     if not raw.get("id") or not raw.get("etag") or not isinstance(raw.get("summary"), str):
         raise EventConflict("managed_event_missing_identity_or_etag")
@@ -278,6 +295,8 @@ def match_changes(plan: Plan, missing: dict[str, dict], stale: dict[str, Existin
 
 
 def guard_deletions(plan: Plan, limit: int) -> None:
+    if any(op.kind == "delete" and op.previous.raw.get("attendees") for op in plan.operations):
+        raise SyncError("deletion_requires_manual_review_attendees_present")
     deletes = sum(op.kind == "delete" for op in plan.operations)
     if deletes > limit or deletes * 5 > plan.managed or (deletes and plan.expected == 0):
         raise SyncError("deletion_budget_exceeded")

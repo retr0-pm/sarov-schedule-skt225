@@ -15,7 +15,7 @@ from google.auth.exceptions import RefreshError
 
 from sarov_schedule.calendar_api import Calendar, HTTPError, event_id
 from sarov_schedule.calendar_cli import load_schedule, reconcile, run
-from sarov_schedule.calendar_sync import MOSCOW, SyncError, build_plan, payload
+from sarov_schedule.calendar_sync import CALENDAR_ID, MOSCOW, SyncError, build_plan, payload
 from sarov_schedule.recognizer import build_schedule, write_schedule
 from test_recognizer import six_week_manifest_and_loader
 
@@ -132,6 +132,21 @@ class ReconciliationTests(unittest.TestCase):
         cal = FakeCalendar([old])
         self.assertEqual(sync(cal, schedule(lesson()))["unchanged"], 1)
         self.assertEqual(cal.writes, [])
+
+    def test_legacy_creator_attendee_is_preserved_and_blocks_deletion(self):
+        owner = "calendar-owner@example.test"
+        attendees = [{"email": owner, "responseStatus": "accepted"}]
+        raw = {**saved(lesson(), "legacy"), "attendees": attendees,
+               "creator": {"email": owner}, "organizer": {"email": CALENDAR_ID}}
+        cal = FakeCalendar([raw])
+        result = sync(cal, schedule(lesson(room="Б202")))
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(cal.events["legacy"]["attendees"], attendees)
+        with self.assertRaisesRegex(SyncError, "deletion_requires_manual_review_attendees_present"):
+            sync(cal, schedule(), deletes=True)
+
+        invited = {**raw, "attendees": [{"email": "guest@example.test"}]}
+        self.assertEqual(sync(FakeCalendar([invited]), schedule(lesson()))["status"], "conflict")
 
     def test_presentation_variant_updates_but_unrelated_replacement_is_held(self):
         cal = FakeCalendar([saved(lesson(), "legacy")])
