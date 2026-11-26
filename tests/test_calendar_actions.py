@@ -148,14 +148,37 @@ class ReconciliationTests(unittest.TestCase):
         invited = {**raw, "attendees": [{"email": "guest@example.test"}]}
         self.assertEqual(sync(FakeCalendar([invited]), schedule(lesson()))["status"], "conflict")
 
-    def test_presentation_variant_updates_but_unrelated_replacement_is_held(self):
+    def test_presentation_variant_and_exact_slot_replacement_update_in_place(self):
         cal = FakeCalendar([saved(lesson(), "legacy")])
         variant = lesson(2, series=2, subject="Основы теории графов (семинар) online", lesson_type="семинар")
         self.assertEqual(sync(cal, schedule(variant))["updated"], 1)
         replacement = lesson(3, series=3, subject="Теория чисел")
         result = sync(cal, schedule(replacement))
+        self.assertEqual((result["updated"], result["created"], result["deleted"]), (1, 0, 0))
+        self.assertEqual(cal.events["legacy"]["summary"], "Теория чисел")
+        self.assertEqual(sync(cal, schedule(replacement))["unchanged"], 1)
+        self.assertEqual(cal.writes, [("patch", "legacy"), ("patch", "legacy")])
+
+    def test_exact_slot_replacement_does_not_guess_between_candidates(self):
+        old = lesson()
+        other = lesson(2, series=2, subject="Математический анализ")
+        replacement = lesson(3, series=3, subject="Теория чисел")
+        for current, desired in (
+            ([saved(old), saved(other)], [replacement]),
+            ([saved(old)], [other, replacement]),
+        ):
+            with self.subTest(current=len(current), desired=len(desired)):
+                cal = FakeCalendar(current)
+                result = sync(cal, schedule(*desired))
+                self.assertEqual(result["errors"], ["ambiguous_exact_slot_replacement"])
+                self.assertEqual(cal.writes, [])
+
+    def test_overlapping_but_different_slot_stays_held_with_deletions_off(self):
+        cal = FakeCalendar([saved(lesson())])
+        replacement = lesson(2, series=2, start="09:05", subject="Теория чисел")
+        result = sync(cal, schedule(replacement))
         self.assertEqual((result["overlapping_creates_blocked"], result["deletions_blocked"]), (1, 1))
-        self.assertEqual((result["created"], result["deleted"]), (0, 0))
+        self.assertEqual(cal.writes, [])
 
     def test_move_between_weeks_and_ambiguous_move(self):
         cal = FakeCalendar([saved(lesson(), "legacy")])
