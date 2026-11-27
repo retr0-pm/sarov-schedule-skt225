@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "started_at": "2026-11-27T06:44:40.846398+00:00",
-  "run_id": "45953735195",
+  "started_at": "2026-11-27T06:46:21.896942+00:00",
+  "run_id": "45953954720",
   "run_attempt": "1",
   "sha": "0a44888eae8392c6e396ff969bc0640b297f5cc8",
   "manifest_fingerprint": "71bfddb3f398a10c3c032ddf7c9e519fce57e0a99a9713c17feedebbffffa85f",
   "validation": "verified",
   "expected": 51,
-  "managed": 57,
+  "managed": 51,
   "created": 0,
   "updated": 0,
   "deleted": 0,
@@ -18,38 +18,7 @@
   "verified": false,
   "errors": [],
   "changes": [],
-  "planned": [
-    {
-      "kind": "delete",
-      "date": "2026-12-07",
-      "start": "12:30"
-    },
-    {
-      "kind": "delete",
-      "date": "2026-12-11",
-      "start": "16:45"
-    },
-    {
-      "kind": "delete",
-      "date": "2026-12-16",
-      "start": "15:00"
-    },
-    {
-      "kind": "delete",
-      "date": "2026-12-02",
-      "start": "16:45"
-    },
-    {
-      "kind": "delete",
-      "date": "2026-12-02",
-      "start": "14:10"
-    },
-    {
-      "kind": "delete",
-      "date": "2026-12-15",
-      "start": "18:30"
-    }
-  ],
+  "planned": [],
   "mode": "dry-run",
   "status": "dry_run"
 }
