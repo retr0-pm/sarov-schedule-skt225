@@ -1,22 +1,36 @@
 {
   "schema_version": 1,
-  "started_at": "2026-11-27T07:14:11.104474+00:00",
-  "run_id": "45956999390",
+  "started_at": "2026-11-27T16:51:02.865027+00:00",
+  "run_id": "46036970411",
   "run_attempt": "1",
   "sha": "7841f5b625a74c7e12828fd9277c09f92a3ab10a",
-  "manifest_fingerprint": "71bfddb3f398a10c3c032ddf7c9e519fce57e0a99a9713c17feedebbffffa85f",
+  "manifest_fingerprint": "8c79397185ec7136a12b350e2964ed3b41cbbc6e1c57ddccea8f0558ed141a0f",
   "validation": "verified",
   "expected": 51,
-  "managed": 51,
-  "created": 0,
+  "managed": 50,
+  "created": 1,
   "updated": 0,
   "deleted": 0,
-  "unchanged": 51,
+  "unchanged": 50,
   "conflicts": 0,
-  "verified": false,
+  "verified": true,
   "errors": [],
-  "changes": [],
-  "planned": [],
-  "mode": "dry-run",
-  "status": "dry_run"
+  "changes": [
+    {
+      "kind": "create",
+      "date": "2026-11-30",
+      "start": "10:00",
+      "subject": "Встреча с представителями отдела кадров РФЯЦ-ВНИИЭФ"
+    }
+  ],
+  "planned": [
+    {
+      "kind": "create",
+      "date": "2026-11-30",
+      "start": "10:00",
+      "subject": "Встреча с представителями отдела кадров РФЯЦ-ВНИИЭФ"
+    }
+  ],
+  "mode": "apply",
+  "status": "success"
 }
