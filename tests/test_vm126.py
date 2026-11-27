@@ -12,7 +12,7 @@ from test_calendar_actions import FakeCalendar, lesson, report, response, saved,
 
 
 class VM126Tests(TestCase):
-    def test_only_other_special_seminars_are_excluded(self):
+    def test_only_selected_special_seminar_is_included(self):
         self.assertTrue(apply_vm126_rules("Спецсеминар «Вычислительная гидродинамика»").include)
         self.assertTrue(apply_vm126_rules("Вычислительная гидродинамика", "спецсеминар").include)
         self.assertFalse(apply_vm126_rules("Спецсеминар «Вычислительная гидродинамика и теплообмен»").include)
@@ -20,6 +20,16 @@ class VM126Tests(TestCase):
         for title in ("Особенности нейронных сетей", "Нелинейные дифференциальные уравнения",
                       "Вычислительные технологии (семинар)"):
             self.assertTrue(apply_vm126_rules(title).include)
+
+    def test_foreign_language_excludes_zabrodina_and_keeps_mordvinova(self):
+        for subject in ("Иностранный язык", "Английский язык", "Иностранный язык (зачёт)"):
+            with self.subTest(subject=subject):
+                excluded = apply_vm126_rules(subject, teacher="И. В. ЗАБРОДИНА")
+                self.assertFalse(excluded.include)
+                self.assertEqual(excluded.reason, "excluded_english_teacher")
+                self.assertTrue(apply_vm126_rules(subject, teacher="Е.А. Мордвинова").include)
+                self.assertTrue(apply_vm126_rules(subject, teacher="И.В. Забродина, Е.А. Мордвинова").include)
+        self.assertTrue(apply_vm126_rules("История", teacher="И.В. Забродина").include)
 
     def test_time_only_line_belongs_to_following_seminar(self):
         texts = ["18:00", "Спецсеминар «Параллельные вычисления»", "С.А. Ростомян", "аудитория Б119"]
