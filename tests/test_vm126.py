@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from sarov_schedule.calendar_api import Calendar
+from sarov_schedule.calendar_api import Calendar, HTTPError
 from sarov_schedule.calendar_cli import reconcile
 from sarov_schedule.calendar_sync import CALENDAR_ID, SyncError, markers, payload
 from sarov_schedule.profiles import VM126
@@ -34,6 +34,19 @@ class VM126Tests(TestCase):
     def test_vm126_cannot_open_skt225_calendar(self):
         with self.assertRaisesRegex(SyncError, "calendar_not_isolated_from_skt225"):
             Calendar(Mock(), profile=VM126, calendar_id=CALENDAR_ID)
+
+    def test_short_lived_token_is_used_only_for_vm126(self):
+        with patch.dict("os.environ", {"VM126_GOOGLE_ACCESS_TOKEN": "test-token"}, clear=True):
+            calendar = Calendar.connect(write=False, profile=VM126, calendar_id="fixture@group.calendar.google.com")
+            self.assertEqual(calendar.session.credentials.token, "test-token")
+            with patch("requests.Session.request", return_value=response(401)) as request:
+                with self.assertRaisesRegex(HTTPError, "^calendar_http_401$"):
+                    calendar.get("id")
+                request.assert_called_once()
+            with self.assertRaisesRegex(SyncError, "write_in_read_only_mode"):
+                calendar.create("id", {})
+            with self.assertRaisesRegex(SyncError, "google_credentials_missing_or_invalid"):
+                Calendar.connect(write=False)
 
     def test_vm126_supports_writer_with_no_access_to_private_events(self):
         session = Mock()
