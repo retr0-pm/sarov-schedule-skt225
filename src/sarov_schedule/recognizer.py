@@ -575,7 +575,6 @@ def build_schedule(
     previous_schedule, previous_digest = _load_previous_schedule(previous_schedule_path)
     if previous_schedule is not None and previous_schedule.get("group") != profile.group:
         raise RecognitionError("Предыдущее расписание относится к другой группе")
-    filter_event = apply_skt225_rules if profile == SKT225 else apply_vm126_rules
     previous_verified_weeks = {
         item.get("week_id") for item in (previous_schedule or {}).get("weeks", []) if item.get("status") == "verified"
     }
@@ -609,7 +608,11 @@ def build_schedule(
             for event in result.raw_events:
                 event["source_pdf_sha256"] = sha256
                 event["week_id"] = week_id
-                decision = filter_event(event["subject"], event.get("lesson_type"))
+                subject, lesson_type = event["subject"], event.get("lesson_type")
+                if profile == SKT225:
+                    decision = apply_skt225_rules(subject, lesson_type)
+                else:
+                    decision = apply_vm126_rules(subject, lesson_type, teacher=event.get("teacher"))
                 if decision.include:
                     included_for_week.append(event)
                 else:

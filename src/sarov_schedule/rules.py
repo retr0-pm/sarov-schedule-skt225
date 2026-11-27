@@ -64,10 +64,16 @@ def allowed_special_seminar_title() -> str:
     return _ALLOWED_SPECIAL_SEMINAR
 
 
-def apply_vm126_rules(subject: str, lesson_type: str | None = None) -> RuleDecision:
+def apply_vm126_rules(
+    subject: str, lesson_type: str | None = None, *, teacher: str | None = None,
+) -> RuleDecision:
     normalized = normalize_subject(subject)
     title = _seminar_title(normalized)
     if title is None and normalize_subject(lesson_type or "") != "спецсеминар":
+        if normalized in {"иностранный язык", "английский язык"}:
+            name = normalize_subject(teacher or "")
+            if re.search(r"\bзабродина\b", name) and not re.search(r"\bмордвинова\b", name):
+                return RuleDecision(False, "excluded_english_teacher", normalized)
         return RuleDecision(True, "included", normalized)
     seminar = title if title is not None else normalized
     include = seminar == "вычислительная гидродинамика"
