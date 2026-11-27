@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from .fetcher import FetchError
+from .profiles import PROFILES, SKT225, Profile
 from .recognizer import RecognitionError, validate_schedule
 
 
-def validate_artifact(output_dir: Path, *, require_schedule: bool = False) -> dict[str, Any]:
+def validate_artifact(
+    output_dir: Path, *, require_schedule: bool = False, profile: Profile = SKT225,
+) -> dict[str, Any]:
     manifest_path = output_dir / "manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -47,7 +50,7 @@ def validate_artifact(output_dir: Path, *, require_schedule: bool = False) -> di
     if schedule_path.exists():
         try:
             schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
-            validate_schedule(schedule, manifest)
+            validate_schedule(schedule, manifest, profile=profile)
         except (OSError, json.JSONDecodeError, RecognitionError) as exc:
             raise FetchError(f"Некорректный schedule.json: {exc}") from exc
         expected_names.update({"schedule.json", "ambiguities.json"})
@@ -75,6 +78,7 @@ def validate_artifact(output_dir: Path, *, require_schedule: bool = False) -> di
 def main() -> None:
     parser = argparse.ArgumentParser(description="Проверить самодостаточный артефакт расписания")
     parser.add_argument("output", type=Path, nargs="?", default=Path("output"))
+    parser.add_argument("--profile", choices=PROFILES, default="skt225")
     parser.add_argument(
         "--require-schedule",
         action="store_true",
@@ -82,7 +86,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     try:
-        manifest = validate_artifact(args.output, require_schedule=args.require_schedule)
+        manifest = validate_artifact(args.output, require_schedule=args.require_schedule, profile=PROFILES[args.profile])
     except FetchError as exc:
         raise SystemExit(f"Артефакт некорректен: {exc}") from exc
     print(f"Проверено PDF: {manifest['pdf_count']}")
