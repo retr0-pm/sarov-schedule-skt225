@@ -43,6 +43,9 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -105,11 +108,25 @@ jobs:
           case "$mode" in off|dry-run|apply) ;; *) exit 1 ;; esac
           echo "value=$mode" >> "$GITHUB_OUTPUT"
 
+      - name: Authenticate to Google Calendar with Workload Identity Federation
+        id: google_auth
+        if: success() && steps.calendar_mode.outputs.value != 'off' && vars.VM126_GOOGLE_WIF_PROVIDER != ''
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.VM126_GOOGLE_WIF_PROVIDER }}
+          service_account: ${{ vars.VM126_GOOGLE_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_lifetime: 900s
+          access_token_scopes: ${{ steps.calendar_mode.outputs.value == 'apply' && 'https://www.googleapis.com/auth/calendar.events' || 'https://www.googleapis.com/auth/calendar.events.readonly' }}
+          create_credentials_file: false
+          export_environment_variables: false
+
       - name: Reconcile the calendar
         if: success() && steps.calendar_mode.outputs.value != 'off'
         env:
           MODE: ${{ steps.calendar_mode.outputs.value }}
-          VM126_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.VM126_GOOGLE_SERVICE_ACCOUNT_JSON }}
+          VM126_GOOGLE_ACCESS_TOKEN: ${{ steps.google_auth.outputs.access_token }}
+          VM126_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ vars.VM126_GOOGLE_WIF_PROVIDER == '' && secrets.VM126_GOOGLE_SERVICE_ACCOUNT_JSON || '' }}
           VM126_GOOGLE_CALENDAR_ID: ${{ vars.VM126_GOOGLE_CALENDAR_ID }}
           ALLOW_DELETIONS: ${{ vars.VM126_ALLOW_DELETIONS }}
         run: |

@@ -11,10 +11,10 @@ from urllib.parse import quote
 import requests
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import AuthorizedSession
-from google.oauth2 import service_account
+from google.oauth2 import credentials as oauth_credentials, service_account
 
 from .calendar_sync import CALENDAR_ID, MOSCOW, SyncError
-from .profiles import SKT225, Profile
+from .profiles import SKT225, VM126, Profile
 
 SCOPE = "https://www.googleapis.com/auth/calendar.events"
 FORBIDDEN_REASONS = {
@@ -81,6 +81,10 @@ class Calendar:
     def connect(cls, *, write: bool, profile: Profile = SKT225, calendar_id: str = CALENDAR_ID) -> Calendar:
         scopes = [SCOPE if write else SCOPE + ".readonly"]
         try:
+            token = os.environ.get("VM126_GOOGLE_ACCESS_TOKEN") if profile == VM126 else None
+            if token:
+                return cls(AuthorizedSession(oauth_credentials.Credentials(token=token), max_refresh_attempts=0),
+                           write=write, profile=profile, calendar_id=calendar_id)
             key = os.environ.get(f"{profile.name.upper()}_GOOGLE_SERVICE_ACCOUNT_JSON")
             if key:
                 settings = json.loads(key)
