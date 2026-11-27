@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 
 from .calendar_api import Calendar, HTTPError, event_id
 from .calendar_sync import (
-    CALENDAR_ID, Operation, SyncError, build_plan, guard_deletions, interval, markers, matches, moment, parse_existing,
+    CALENDAR_ID, Operation, SyncError, build_plan, markers, matches, moment, parse_existing,
     payload, week_bounds, window,
 )
 from .fetcher import SCHEDULE_URL, FetchError
@@ -96,6 +96,17 @@ def verify_event(raw: dict | None, desired: dict, ident: str, profile: Profile, 
     raise SyncError("calendar_event_readback_mismatch")
 
 
+def patch_event(calendar: Calendar, current: dict, body: dict, profile: Profile) -> None:
+    private = current.get("extendedProperties", {}).get("private", {})
+    if private:
+        # Preserve other properties and update any inherited copies of our markers.
+        values = markers(body, profile)
+        body["extendedProperties"] = {
+            "private": {**private, **{key: values[key] for key in private.keys() & values.keys()}}
+        }
+    calendar.patch(current["id"], current["etag"], body)
+
+
 def mutate(calendar: Calendar, op: Operation, clock, profile: Profile, calendar_id: str) -> bool:
     """Return False when a concurrent insert already produced the desired event."""
     desired = op.desired
@@ -105,12 +116,27 @@ def mutate(calendar: Calendar, op: Operation, clock, profile: Profile, calendar_
         raise SyncError("event_started_during_sync")
     if op.kind == "create":
         ident = event_id(desired["source_id"], profile)
+        body = payload(desired, profile)
         try:
-            calendar.create(ident, payload(desired, profile))
+            calendar.create(ident, body)
         except HTTPError as exc:
             if exc.status != 409:
                 raise
-            verify_event(calendar.get(ident), desired, ident, profile, calendar_id)
+            current = calendar.get(ident)
+            if current and current.get("status") == "cancelled":
+                try:
+                    old = parse_existing({**current, "status": "confirmed"}, profile, calendar_id)
+                except (KeyError, AttributeError, TypeError, ValueError):
+                    raise SyncError("calendar_event_readback_mismatch") from None
+                if (not old or old.raw["id"] != ident or old.markers["source_id"] != desired["source_id"]
+                        or old.markers["series_id"] != desired["series_id"]):
+                    raise SyncError("calendar_event_readback_mismatch")
+                now = clock()
+                if old.start < now or moment(desired["date"], desired["start"]) < now:
+                    raise SyncError("event_started_during_sync")
+                patch_event(calendar, current, {**body, "status": "confirmed"}, profile)
+                return True
+            verify_event(current, desired, ident, profile, calendar_id)
             return False
         return True
 
@@ -122,21 +148,13 @@ def mutate(calendar: Calendar, op: Operation, clock, profile: Profile, calendar_
     if old.start < clock() or (desired and moment(desired["date"], desired["start"]) < clock()):
         raise SyncError("event_started_during_sync")
     if op.kind == "update":
-        new_body = payload(desired, profile)
-        private = current.get("extendedProperties", {}).get("private", {})
-        if private:
-            # Preserve other properties and update any inherited copies of our markers.
-            values = markers(new_body, profile)
-            new_body["extendedProperties"] = {
-                "private": {**private, **{key: values[key] for key in private.keys() & values.keys()}}
-            }
-        calendar.patch(ident, etag, new_body)
+        patch_event(calendar, current, payload(desired, profile), profile)
     else:
         calendar.delete(ident, etag)
     return True
 
 
-def reconcile(calendar: Calendar, schedule: dict, mode: str, allow_deletes: bool, report: dict,
+def reconcile(calendar: Calendar, schedule: dict, mode: str, report: dict,
               *, clock=lambda: datetime.now(timezone.utc),
               profile: Profile = SKT225, calendar_id: str = CALENDAR_ID) -> None:
     cutoff = clock()
@@ -153,26 +171,12 @@ def reconcile(calendar: Calendar, schedule: dict, mode: str, allow_deletes: bool
         report["status"] = "dry_run"
         return
 
-    if allow_deletes:
-        guard_deletions(plan, 3)
-    blocked_deletes = [op for op in plan.operations if op.kind == "delete" and not allow_deletes]
-    blocked_creates = []
-    for op in plan.operations:
-        if op.kind != "create" or not blocked_deletes:
-            continue
-        start, end = interval(payload(op.desired, profile))
-        if any(start < stale.previous.end and end > stale.previous.start for stale in blocked_deletes):
-            blocked_creates.append(op)
-    pending = blocked_creates + blocked_deletes
-    report["deletions_blocked"] = len(blocked_deletes)
-    report["overlapping_creates_blocked"] = len(blocked_creates)
-    operations = [op for op in plan.operations if op not in pending]
-    if operations:
+    if plan.operations:
         # Equality ignores ordering, but catches every changed or missing managed record.
         second = calendar.list(*bounds)
         if build_plan(schedule, second, cutoff, profile=profile, calendar_id=calendar_id) != plan:
             raise SyncError("calendar_changed_before_write")
-    for op in operations:
+    for op in plan.operations:
         performed = mutate(calendar, op, clock, profile, calendar_id)
         if performed:
             report["changes"].append(op.public())
@@ -185,20 +189,18 @@ def reconcile(calendar: Calendar, schedule: dict, mode: str, allow_deletes: bool
 
     # A no-op run already read the complete calendar. After writes, rebuild from a fresh listing.
     verified = build_plan(schedule, calendar.list(*bounds), cutoff, profile=profile,
-                          calendar_id=calendar_id) if operations else plan
-    if (verified.conflicts or verified.unchanged + len(blocked_creates) != plan.expected
-            or verified.operations != pending):
+                          calendar_id=calendar_id) if plan.operations else plan
+    if verified.conflicts or verified.unchanged != plan.expected or verified.operations:
         raise SyncError("calendar_final_verification_failed")
-    report["verified"] = True
-    report["status"] = "deletions_disabled" if pending else "success"
+    report.update(verified=True, status="success")
 
 
-def run(directory: Path, schema: Path, mode: str, allow_deletes: bool, profile: Profile = SKT225) -> dict:
+def run(directory: Path, schema: Path, mode: str, profile: Profile = SKT225) -> dict:
     report = dict(schema_version=1, started_at=datetime.now(timezone.utc).isoformat(),
                   run_id=os.environ.get("GITHUB_RUN_ID"), run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
                   sha=os.environ.get("GITHUB_SHA"), manifest_fingerprint=None, validation="failed",
                   expected=0, managed=0, created=0, updated=0, deleted=0, unchanged=0, conflicts=0,
-                  deletions_blocked=0, overlapping_creates_blocked=0, verified=False,
+                  verified=False,
                   errors=[], changes=[], planned=[], mode=mode,
                   status="error")
     try:
@@ -211,13 +213,11 @@ def run(directory: Path, schema: Path, mode: str, allow_deletes: bool, profile: 
         if mode == "off":
             report["status"] = "disabled"
         else:
-            if profile == SKT225 and mode == "apply" and os.environ.get("SKT225_CHATGPT_WRITES_DISABLED") != "true":
-                raise SyncError("legacy_calendar_writer_not_disabled")
             calendar_id = CALENDAR_ID if profile == SKT225 else os.environ.get("VM126_GOOGLE_CALENDAR_ID", "")
             if profile != SKT225 and not re.fullmatch(r"[a-z0-9]+@group\.calendar\.google\.com", calendar_id):
                 raise SyncError("vm126_calendar_id_missing_or_invalid")
             calendar = Calendar.connect(write=mode == "apply", profile=profile, calendar_id=calendar_id)
-            reconcile(calendar, schedule, mode, allow_deletes, report, profile=profile, calendar_id=calendar_id)
+            reconcile(calendar, schedule, mode, report, profile=profile, calendar_id=calendar_id)
     except SyncError as exc:
         report["errors"].append(str(exc))
     except Exception:
@@ -233,10 +233,9 @@ def main() -> None:
     parser.add_argument("--schema", type=Path, default=Path("schema/schedule.schema.json"))
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--mode", choices=("off", "dry-run", "apply", "upstream-failed"), default="dry-run")
-    parser.add_argument("--allow-deletes", action="store_true")
     args = parser.parse_args()
     profile = PROFILES[args.profile]
-    report = run(args.directory, args.schema, args.mode, args.allow_deletes, profile)
+    report = run(args.directory, args.schema, args.mode, profile)
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     summary = (
         f"### {profile.group} · {report['status']}\n\n"

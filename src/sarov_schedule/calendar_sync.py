@@ -1,4 +1,4 @@
-"""Pure reconciliation for the dedicated SKT-225 calendar."""
+"""Plan changes to a group's dedicated calendar."""
 
 from __future__ import annotations
 
@@ -279,19 +279,14 @@ def match_changes(plan: Plan, missing: dict[str, dict], stale: dict[str, Existin
     for key, desired in missing.items():
         start, end = (moment(desired["date"], desired["start"]), moment(desired["date"], desired["end"]))
         title = normalize_subject(desired["subject"])
-        similar = by_series[desired["series_id"]]
-        nearby = [(ident, old) for ident, old in similar if abs(start - old.start) <= HORIZON]
-        if any(normalize_subject(old.raw["summary"]) != title for _, old in nearby):
-            plan.conflicts.append("series_title_mismatch")
+        nearby = [(ident, old) for ident, old in by_series[desired["series_id"]]
+                  if abs(start - old.start) <= HORIZON and normalize_subject(old.raw["summary"]) == title]
         same_slot = by_slot[desired["week_id"], subject_at_slot(desired["subject"]), start, end]
         candidates[key] = dict(nearby + same_slot)
 
     degrees = Counter(ident for pairs in candidates.values() for ident in pairs)
     for key, pairs in candidates.items():
-        if not pairs:
-            continue
         if len(pairs) != 1 or any(degrees[ident] != 1 for ident in pairs):
-            plan.conflicts.append("ambiguous_move_or_replacement")
             continue
         ident, old = next(iter(pairs.items()))
         plan.operations.append(Operation("update", missing.pop(key), old))
@@ -313,18 +308,7 @@ def replace_exact_slots(
     for key in list(missing):
         slot = slots[key]
         candidates = stale_slots.get(slot, [])
-        if not candidates or slot[0] not in safe_weeks:
-            continue
-        if desired_counts[slot] != 1 or len(candidates) != 1:
-            plan.conflicts.append("ambiguous_exact_slot_replacement")
+        if desired_counts[slot] != 1 or len(candidates) != 1 or slot[0] not in safe_weeks:
             continue
         old = stale.pop(candidates[0])
         plan.operations.append(Operation("update", missing.pop(key), old))
-
-
-def guard_deletions(plan: Plan, limit: int) -> None:
-    if any(op.kind == "delete" and op.previous.raw.get("attendees") for op in plan.operations):
-        raise SyncError("deletion_requires_manual_review_attendees_present")
-    deletes = sum(op.kind == "delete" for op in plan.operations)
-    if deletes > limit or deletes * 5 > plan.managed or (deletes and plan.expected == 0):
-        raise SyncError("deletion_budget_exceeded")

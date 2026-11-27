@@ -6,7 +6,7 @@ on:
       calendar_mode:
         description: Calendar execution mode
         type: choice
-        options: [dry-run, off, apply]
+        options: [dry-run, "off", apply]
         default: dry-run
   schedule:
     - cron: "27 * * * *"
@@ -128,11 +128,7 @@ jobs:
           VM126_GOOGLE_ACCESS_TOKEN: ${{ steps.google_auth.outputs.access_token }}
           VM126_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ vars.VM126_GOOGLE_WIF_PROVIDER == '' && secrets.VM126_GOOGLE_SERVICE_ACCOUNT_JSON || '' }}
           VM126_GOOGLE_CALENDAR_ID: ${{ vars.VM126_GOOGLE_CALENDAR_ID }}
-          ALLOW_DELETIONS: ${{ vars.VM126_ALLOW_DELETIONS }}
-        run: |
-          args=()
-          if [[ "$MODE" == apply && "$ALLOW_DELETIONS" == true ]]; then args+=(--allow-deletes); fi
-          sarov-schedule-calendar --profile vm126 output --mode "$MODE" --report sync-report.json "${args[@]}"
+        run: sarov-schedule-calendar --profile vm126 output --mode "$MODE" --report sync-report.json
 
       - name: Validate and report with calendar disabled
         if: success() && steps.calendar_mode.outputs.value == 'off'
