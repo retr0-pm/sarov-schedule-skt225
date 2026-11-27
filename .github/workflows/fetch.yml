@@ -6,7 +6,7 @@ on:
       calendar_mode:
         description: Calendar execution mode
         type: choice
-        options: [dry-run, off, apply]
+        options: [dry-run, "off", apply]
         default: dry-run
   schedule:
     - cron: "17 * * * *"
@@ -110,12 +110,7 @@ jobs:
         env:
           MODE: ${{ steps.calendar_mode.outputs.value }}
           SKT225_GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.SKT225_GOOGLE_SERVICE_ACCOUNT_JSON }}
-          SKT225_CHATGPT_WRITES_DISABLED: ${{ vars.SKT225_CHATGPT_WRITES_DISABLED }}
-          ALLOW_DELETIONS: ${{ vars.SKT225_ALLOW_DELETIONS }}
-        run: |
-          args=()
-          if [[ "$MODE" == apply && "$ALLOW_DELETIONS" == true ]]; then args+=(--allow-deletes); fi
-          sarov-schedule-calendar output --mode "$MODE" --report sync-report.json "${args[@]}"
+        run: sarov-schedule-calendar output --mode "$MODE" --report sync-report.json
 
       - name: Validate and report with calendar disabled
         if: success() && steps.calendar_mode.outputs.value == 'off'

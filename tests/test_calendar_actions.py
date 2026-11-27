@@ -15,7 +15,7 @@ from google.auth.exceptions import RefreshError
 
 from sarov_schedule.calendar_api import Calendar, HTTPError, event_id
 from sarov_schedule.calendar_cli import load_schedule, reconcile, run
-from sarov_schedule.calendar_sync import CALENDAR_ID, MOSCOW, SyncError, build_plan, payload
+from sarov_schedule.calendar_sync import CALENDAR_ID, MOSCOW, SyncError, build_plan, markers, payload
 from sarov_schedule.recognizer import build_schedule, write_schedule
 from test_recognizer import six_week_manifest_and_loader
 
@@ -55,7 +55,7 @@ class FakeCalendar:
         self.drop = False
 
     def list(self, *_):
-        return deepcopy(list(self.events.values()))
+        return deepcopy([event for event in self.events.values() if event["status"] != "cancelled"])
 
     def get(self, ident):
         return deepcopy(self.events.get(ident))
@@ -85,9 +85,9 @@ class FakeCalendar:
         del self.events[ident]
 
 
-def sync(cal, target, *, deletes=False, mode="apply", now=NOW):
+def sync(cal, target, *, mode="apply", now=NOW):
     summary = report()
-    reconcile(cal, target, mode, deletes, summary, clock=lambda: now)
+    reconcile(cal, target, mode, summary, clock=lambda: now)
     return summary
 
 
@@ -133,7 +133,7 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(sync(cal, schedule(lesson()))["unchanged"], 1)
         self.assertEqual(cal.writes, [])
 
-    def test_legacy_creator_attendee_is_preserved_and_blocks_deletion(self):
+    def test_legacy_creator_attendee_is_preserved_and_allows_cancellation(self):
         owner = "calendar-owner@example.test"
         attendees = [{"email": owner, "responseStatus": "accepted"}]
         raw = {**saved(lesson(), "legacy"), "attendees": attendees,
@@ -142,8 +142,7 @@ class ReconciliationTests(unittest.TestCase):
         result = sync(cal, schedule(lesson(room="Б202")))
         self.assertEqual(result["updated"], 1)
         self.assertEqual(cal.events["legacy"]["attendees"], attendees)
-        with self.assertRaisesRegex(SyncError, "deletion_requires_manual_review_attendees_present"):
-            sync(cal, schedule(), deletes=True)
+        self.assertEqual(sync(cal, schedule())["deleted"], 1)
 
         invited = {**raw, "attendees": [{"email": "guest@example.test"}]}
         self.assertEqual(sync(FakeCalendar([invited]), schedule(lesson()))["status"], "conflict")
@@ -159,7 +158,7 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(sync(cal, schedule(replacement))["unchanged"], 1)
         self.assertEqual(cal.writes, [("patch", "legacy"), ("patch", "legacy")])
 
-    def test_exact_slot_replacement_does_not_guess_between_candidates(self):
+    def test_multiple_exact_slot_candidates_converge_without_guessing(self):
         old = lesson()
         other = lesson(2, series=2, subject="Математический анализ")
         replacement = lesson(3, series=3, subject="Теория чисел")
@@ -170,41 +169,71 @@ class ReconciliationTests(unittest.TestCase):
             with self.subTest(current=len(current), desired=len(desired)):
                 cal = FakeCalendar(current)
                 result = sync(cal, schedule(*desired))
-                self.assertEqual(result["errors"], ["ambiguous_exact_slot_replacement"])
-                self.assertEqual(cal.writes, [])
+                self.assertEqual((result["status"], result["conflicts"], result["updated"]), ("success", 0, 0))
+                self.assertEqual((result["created"], result["deleted"]), (len(desired), len(current)))
+                self.assertEqual({markers(event)["source_id"] for event in cal.events.values()},
+                                 {event["source_id"] for event in desired})
 
-    def test_overlapping_but_different_slot_stays_held_with_deletions_off(self):
+    def test_overlapping_but_different_slot_creates_current_lesson_and_deletes_old_one(self):
         cal = FakeCalendar([saved(lesson())])
         replacement = lesson(2, series=2, start="09:05", subject="Теория чисел")
         result = sync(cal, schedule(replacement))
-        self.assertEqual((result["overlapping_creates_blocked"], result["deletions_blocked"]), (1, 1))
-        self.assertEqual(cal.writes, [])
+        self.assertEqual((result["created"], result["deleted"], result["status"]), (1, 1, "success"))
+        self.assertEqual(list(cal.events), [event_id(replacement["source_id"])])
 
-    def test_move_between_weeks_and_ambiguous_move(self):
+    def test_move_between_weeks_and_multiple_move_candidates(self):
         cal = FakeCalendar([saved(lesson(), "legacy")])
         new = lesson(2, week=W2, day="2026-11-30")
-        conflict = sync(cal, schedule(new, lesson(3, week=W2, day="2026-12-01")))
-        self.assertEqual((conflict["status"], cal.writes), ("conflict", []))
         self.assertEqual(sync(cal, schedule(new))["updated"], 1)
         self.assertEqual(list(cal.events), ["legacy"])
+        cal = FakeCalendar([saved(lesson(), "legacy")])
+        result = sync(cal, schedule(new, lesson(3, week=W2, day="2026-12-01")))
+        self.assertEqual((result["created"], result["deleted"], result["conflicts"]), (2, 1, 0))
 
-    def test_cancellation_threshold_and_user_event(self):
-        events = [lesson(i, series=i) for i in range(1, 6)]
+    def test_verified_schedule_can_cancel_all_future_lessons_and_keeps_user_event(self):
+        events = [lesson(i, series=i) for i in range(1, 7)]
         user_event = {**saved(lesson(), "user"), "description": "User data"}
         cal = FakeCalendar([*(saved(event) for event in events), user_event])
-        target = schedule(*events[1:])
-        self.assertEqual(sync(cal, target)["status"], "deletions_disabled")
+        target = schedule()
+        preview = sync(cal, target, mode="dry-run")
+        self.assertEqual(preview["status"], "dry_run")
+        self.assertEqual([entry["kind"] for entry in preview["planned"]], ["delete"] * 6)
         self.assertEqual(cal.writes, [])
-        self.assertEqual(sync(cal, target, deletes=True)["deleted"], 1)
-        self.assertEqual(cal.events["user"], user_event)
-        with self.assertRaisesRegex(SyncError, "deletion_budget_exceeded"):
-            sync(cal, schedule(events[-1]), deletes=True)
-        self.assertEqual(len(cal.writes), 1)
+        result = sync(cal, target)
+        self.assertEqual((result["deleted"], result["verified"], result["status"]), (6, True, "success"))
+        self.assertEqual(cal.events, {"user": user_event})
+        self.assertEqual(sync(cal, target)["deleted"], 0)
+
+    def test_cancellation_resumes_after_a_partial_failure(self):
+        cal = FakeCalendar([saved(lesson()), saved(lesson(2, series=2))])
+        cal.fail_at = 1
+        with self.assertRaises(HTTPError):
+            sync(cal, schedule())
+        self.assertEqual(len(cal.events), 1)
+        cal.fail_at = None
+        self.assertEqual(sync(cal, schedule())["deleted"], 1)
+        self.assertEqual(cal.events, {})
+
+    def test_restores_a_cancelled_managed_lesson_when_it_returns(self):
+        entry = lesson()
+        raw = saved(entry)
+        cal = FakeCalendar([{**raw, "status": "cancelled"}])
+        cal.create = Mock(side_effect=HTTPError(409))
+        result = sync(cal, schedule(entry))
+        self.assertEqual((result["created"], result["verified"]), (1, True))
+        self.assertEqual(cal.writes, [("patch", raw["id"])])
+        self.assertEqual(sync(cal, schedule(entry))["unchanged"], 1)
+
+        cal = FakeCalendar([{**raw, "status": "cancelled", "description": "User data"}])
+        cal.create = Mock(side_effect=HTTPError(409))
+        with self.assertRaisesRegex(SyncError, "readback_mismatch"):
+            sync(cal, schedule(entry))
+        self.assertEqual(cal.writes, [])
 
     def test_past_events_and_malformed_or_duplicate_markers(self):
         old = saved(lesson(), "past")
         cal = FakeCalendar([old])
-        self.assertEqual(sync(cal, schedule(), deletes=True, now=datetime(2026, 11, 25, tzinfo=MOSCOW))["deleted"], 0)
+        self.assertEqual(sync(cal, schedule(), now=datetime(2026, 11, 25, tzinfo=MOSCOW))["deleted"], 0)
         broken = {**old, "description": old["description"].replace("source_id=", "bad=")}
         copies = [old, {**old, "id": "duplicate"}]
         for records in ([broken], copies):
@@ -344,7 +373,7 @@ class ValidationTests(unittest.TestCase):
                     else:
                         corrupted["weeks"] = corrupted["weeks"][:-1]
                     (path / "schedule.json").write_text(json.dumps(corrupted))
-                    self.assertEqual(run(path, schema, "dry-run", False)["status"], "error")
+                    self.assertEqual(run(path, schema, "apply")["status"], "error")
                     if broken == "missing_pdf":
                         failed_file.write_bytes(pdf)
                     (path / "ambiguities.json").write_text(json.dumps({"items": [], "status": "verified"}))
