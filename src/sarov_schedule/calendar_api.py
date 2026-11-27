@@ -138,12 +138,13 @@ class Calendar:
         }
         events = []
         tokens = set()
+        writer_roles = ("writer", "writerWithoutPrivateAccess", "owner")
+        allowed_roles = writer_roles if self.write else (*writer_roles, "reader")
         for _ in range(50):
             page = self.request("GET", params=params)
             if (page is None or page.get("timeZone") != MOSCOW.key
                     or page.get("summary") != self.profile.calendar_title
-                    or page.get("accessRole") not in (("writer", "owner") if self.write
-                                                     else ("reader", "writer", "owner"))):
+                    or page.get("accessRole") not in allowed_roles):
                 raise SyncError("calendar_identity_or_access_mismatch")
             items = page.get("items", [])
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):

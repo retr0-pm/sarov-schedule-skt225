@@ -5,7 +5,7 @@ Workflow [Fetch VM-126 schedule](https://github.com/retr0-pm/sarov-schedule-skt2
 Для календаря **«Расписание ВМ-126»** с часовым поясом `Europe/Moscow` используются отдельный ID, отдельный секрет и независимый режим работы.
 
 1. Укажите ID этого календаря в переменной `VM126_GOOGLE_CALENDAR_ID` на вкладке [Actions Variables](https://github.com/retr0-pm/sarov-schedule-skt225/settings/variables/actions).
-2. Создайте сервисный аккаунт для ВМ-126 в проекте с включённым Calendar API. Предоставьте ему доступ только к календарю ВМ-126. Для пробного чтения достаточно просмотра сведений. Почасовое применение требует роли редактирования мероприятий. Сохраните ключ непосредственно в [Actions Secret](https://github.com/retr0-pm/sarov-schedule-skt225/settings/secrets/actions) `VM126_GOOGLE_SERVICE_ACCOUNT_JSON`.
+2. Создайте сервисный аккаунт для ВМ-126 в проекте с включённым Calendar API. Предоставьте ему доступ только к календарю ВМ-126. Для пробного чтения достаточно просмотра сведений. Для почасового применения выберите **Редактировать (личные мероприятия отображаются как занятое время)**. Сохраните ключ непосредственно в [Actions Secret](https://github.com/retr0-pm/sarov-schedule-skt225/settings/secrets/actions) `VM126_GOOGLE_SERVICE_ACCOUNT_JSON`.
 3. Запустите workflow на ветке `main` с `calendar_mode=dry-run`. Сверьте [отчёт ВМ-126](https://github.com/retr0-pm/sarov-schedule-skt225/blob/vm126-sync-reports/latest.json). Для пустого календаря ожидаются только создания будущих занятий.
 4. Для включения рабочих запусков задайте `VM126_SYNC_MODE=apply`. Можно сразу выполнить один ручной запуск в режиме `apply` с последующей сверкой отчёта.
 

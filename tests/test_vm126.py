@@ -8,7 +8,7 @@ from sarov_schedule.calendar_sync import CALENDAR_ID, SyncError, markers, payloa
 from sarov_schedule.profiles import VM126
 from sarov_schedule.recognizer import TextLine, _parse_entry, _split_entries
 from sarov_schedule.rules import apply_vm126_rules
-from test_calendar_actions import FakeCalendar, lesson, report, saved, schedule
+from test_calendar_actions import FakeCalendar, lesson, report, response, saved, schedule
 
 
 class VM126Tests(TestCase):
@@ -34,6 +34,18 @@ class VM126Tests(TestCase):
     def test_vm126_cannot_open_skt225_calendar(self):
         with self.assertRaisesRegex(SyncError, "calendar_not_isolated_from_skt225"):
             Calendar(Mock(), profile=VM126, calendar_id=CALENDAR_ID)
+
+    def test_vm126_supports_writer_with_no_access_to_private_events(self):
+        session = Mock()
+        session.request.return_value = response(200, {
+            "summary": VM126.calendar_title, "timeZone": "Europe/Moscow",
+            "accessRole": "writerWithoutPrivateAccess", "items": [],
+        })
+        owner_calendar = "fixture@group.calendar.google.com"
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        for write in (False, True):
+            client = Calendar(session, write=write, profile=VM126, calendar_id=owner_calendar)
+            self.assertEqual(client.list(now, now), [])
 
     def test_group_markers_and_idempotent_calendar_writes(self):
         target = lesson(source_id="vm126-v1-" + "f" * 24)
