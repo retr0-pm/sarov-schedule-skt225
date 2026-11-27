@@ -1,22 +1,35 @@
 {
   "schema_version": 1,
-  "started_at": "2026-11-27T07:13:08.746720+00:00",
-  "run_id": "45956878622",
+  "started_at": "2026-11-27T07:13:48.724311+00:00",
+  "run_id": "45956945722",
   "run_attempt": "1",
   "sha": "7841f5b625a74c7e12828fd9277c09f92a3ab10a",
   "manifest_fingerprint": "5cd07a65fcd221fcdb5510243d4b7e74826f35412307e75ae049a02d77cb3ba6",
   "validation": "verified",
   "expected": 70,
-  "managed": 0,
+  "managed": 70,
   "created": 0,
   "updated": 0,
   "deleted": 0,
-  "unchanged": 0,
+  "unchanged": 68,
   "conflicts": 0,
   "verified": false,
   "errors": [],
   "changes": [],
-  "planned": [],
-  "mode": "off",
-  "status": "disabled"
+  "planned": [
+    {
+      "kind": "update",
+      "date": "2026-12-03",
+      "start": "15:00",
+      "subject": "История и методология прикладной математики и информатики"
+    },
+    {
+      "kind": "update",
+      "date": "2026-12-04",
+      "start": "18:30",
+      "subject": "Спецсеминар «Параллельные вычисления и анализ алгоритмов»"
+    }
+  ],
+  "mode": "dry-run",
+  "status": "dry_run"
 }
